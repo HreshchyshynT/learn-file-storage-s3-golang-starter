@@ -14,6 +14,11 @@ import (
 	"github.com/google/uuid"
 )
 
+var allowedThumbnailMimeTypes = [...]string{
+	"image/jpeg",
+	"image/png",
+}
+
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
 	videoIDString := r.PathValue("videoID")
 	videoID, err := uuid.Parse(videoIDString)
@@ -52,6 +57,10 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	contentType := header.Header.Get("Content-type")
+	if !isMimeTypeAllowed(contentType) {
+		respondWithError(w, http.StatusBadRequest, "Invalid mime type", err)
+		return
+	}
 
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't read file", err)
@@ -106,4 +115,13 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	respondWithJSON(w, http.StatusOK, video)
+}
+
+func isMimeTypeAllowed(mime string) bool {
+	for _, allowed := range allowedThumbnailMimeTypes {
+		if allowed == mime {
+			return true
+		}
+	}
+	return false
 }
