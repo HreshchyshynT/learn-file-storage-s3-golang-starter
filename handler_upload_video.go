@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/utils"
 	"github.com/google/uuid"
 )
 
@@ -53,12 +54,12 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	mpFile, header, err := r.FormFile("video")
-	defer mpFile.Close()
 
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Couldn't read file", err)
 		return
 	}
+	defer mpFile.Close()
 
 	contentType := header.Header.Get("Content-type")
 
@@ -88,9 +89,25 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	tmpFile.Seek(0, io.SeekStart)
 
+	aspectRatio, err := utils.GetVideoAspectRatio(tmpFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Internal server error", err)
+		return
+	}
+
+	var prefix string
+	switch aspectRatio {
+	case "16:9":
+		prefix = "landscape"
+	case "9:16":
+		prefix = "portrait"
+	default:
+		prefix = "other"
+	}
+
 	randBytes := make([]byte, 32)
 	_, _ = rand.Read(randBytes)
-	fileName := fmt.Sprintf("%v.%v", base64.RawURLEncoding.EncodeToString(randBytes), "mp4")
+	fileName := fmt.Sprintf("%v/%v.%v", prefix, base64.RawURLEncoding.EncodeToString(randBytes), "mp4")
 
 	_, err = cfg.s3Client.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
