@@ -87,7 +87,20 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	tmpFile.Seek(0, io.SeekStart)
+	processedPath, err := utils.ProcessVideoForFastStart(tmpFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Internal server error", err)
+		return
+	}
+
+	tmpFile, err = os.Open(processedPath)
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Internal server error", err)
+		return
+	}
 
 	aspectRatio, err := utils.GetVideoAspectRatio(tmpFile.Name())
 	if err != nil {
