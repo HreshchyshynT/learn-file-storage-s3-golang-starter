@@ -6,10 +6,11 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"log"
 	"mime"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -79,8 +80,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	written, err := io.Copy(tmpFile, mpFile)
-	log.Println("written bytes:", written, "to", tmpFile.Name())
+	_, err = io.Copy(tmpFile, mpFile)
 
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't save file", err)
@@ -133,7 +133,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	videoUrl := fmt.Sprintf("https://%v.s3.%v.amazonaws.com/%v", cfg.s3Bucket, cfg.s3Region, fileName)
+	videoUrl := fmt.Sprint(cfg.s3Bucket, ",", fileName)
 
 	video = database.Video{
 		ID:           video.ID,
@@ -154,5 +154,58 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	video, err = cfg.dbVideoToSignedVideo(video)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get signed url", err)
+		return
+	}
+
 	respondWithJSON(w, http.StatusOK, video)
+}
+
+func generatePresignUrl(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
+	presignClient := s3.NewPresignClient(s3Client)
+
+	getObject := &s3.GetObjectInput{
+		Bucket: &bucket,
+		Key:    &key,
+	}
+
+	request, err := presignClient.PresignGetObject(context.Background(), getObject, s3.WithPresignExpires(expireTime))
+	if err != nil {
+		return "", err
+	}
+
+	return request.URL, nil
+}
+
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+	if video.VideoURL == nil {
+		return video, nil
+	}
+	parts := strings.Split(*video.VideoURL, ",")
+	if len(parts) < 2 {
+		return video, nil
+	}
+
+	bucket, key := parts[0], parts[1]
+
+	presignedUrl, err := generatePresignUrl(cfg.s3Client, bucket, key, 5*time.Minute)
+	if err != nil {
+		return video, err
+	}
+
+	return database.Video{
+		ID:           video.ID,
+		CreatedAt:    video.CreatedAt,
+		UpdatedAt:    video.UpdatedAt,
+		ThumbnailURL: video.ThumbnailURL,
+		VideoURL:     &presignedUrl,
+		CreateVideoParams: database.CreateVideoParams{
+			Title:       video.Title,
+			Description: video.Description,
+			UserID:      video.UserID,
+		},
+	}, nil
 }
